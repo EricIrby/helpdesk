@@ -13,6 +13,11 @@
             communicationAreaRef.replyToEmail(e);
           }
         "
+        @email:forward="
+          (e) => {
+            communicationAreaRef.forwardEmail(e);
+          }
+        "
         @update="
           () => {
             activities.reload();
