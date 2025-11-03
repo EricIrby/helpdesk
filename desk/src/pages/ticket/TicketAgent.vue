@@ -12,7 +12,7 @@
     </div>
     <SetContactPhoneModal
       v-model="showPhoneModal"
-      :name="ticket.data?.contact?.name"
+      :name="ticket.doc?.contact?.name"
       @onUpdate="ticket.reload"
     />
   </div>
