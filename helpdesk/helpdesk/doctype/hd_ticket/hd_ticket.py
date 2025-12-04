@@ -654,6 +654,165 @@ class HDTicket(Document):
             frappe.throw(_(e))
 
     @frappe.whitelist()
+    def forward_email(
+        self,
+        to: str,
+        cc: str = None,
+        bcc: str = None,
+        message: str = None,
+        original_communication_id: str = None,
+        attachments: List[str] = [],
+    ):
+        """
+        Forward a ticket email to external recipients with attachments.
+
+        Args:
+            to: Recipient email addresses (comma-separated)
+            cc: CC email addresses (comma-separated, optional)
+            bcc: BCC email addresses (comma-separated, optional)
+            message: Additional message from agent (optional)
+            original_communication_id: Original communication to forward
+            attachments: List of File doctype names to attach
+        """
+        if not to:
+            frappe.throw(_("Please specify at least one recipient"))
+
+        skip_email_workflow = self.skip_email_workflow()
+        medium = "" if skip_email_workflow else "Email"
+        sender = frappe.session.user
+        sender_email = None if skip_email_workflow else self.sender_email()
+
+        # Get original communication if specified
+        original_content = ""
+        original_subject = self.subject
+        original_sender = ""
+        original_recipients = ""
+        original_date = ""
+
+        if original_communication_id:
+            try:
+                original_comm = frappe.get_doc("Communication", original_communication_id)
+                original_content = original_comm.content or ""
+                original_subject = original_comm.subject or self.subject
+                original_sender = original_comm.sender or ""
+                original_recipients = original_comm.recipients or ""
+                original_date = frappe.utils.format_datetime(
+                    original_comm.creation,
+                    "MMM d, yyyy 'at' h:mm a"
+                )
+            except Exception:
+                pass
+
+        # Build forward subject
+        subject = original_subject
+        if not subject.startswith("Fwd:"):
+            subject = f"Fwd: {subject}"
+
+        # Build forward message body
+        forward_header = f"""
+        <p>---------- Forwarded message ---------</p>
+        <p><strong>From:</strong> {original_sender}<br/>
+        <strong>Date:</strong> {original_date}<br/>
+        <strong>Subject:</strong> {original_subject}<br/>
+        <strong>To:</strong> {original_recipients}</p>
+        <br/>
+        """
+
+        # Combine agent message (if any) with forwarded content
+        if message:
+            full_message = f"{message}<br/><br/>{forward_header}{original_content}"
+        else:
+            full_message = f"{forward_header}{original_content}"
+
+        # Create Communication record
+        communication = frappe.get_doc(
+            {
+                "bcc": bcc,
+                "cc": cc,
+                "communication_medium": medium,
+                "communication_type": "Communication",
+                "content": full_message,
+                "doctype": "Communication",
+                "email_account": sender_email.name if sender_email else None,
+                "email_status": "Open",
+                "recipients": to,
+                "reference_doctype": "HD Ticket",
+                "reference_name": self.name,
+                "sender": sender,
+                "sent_or_received": "Sent",
+                "status": "Linked",
+                "subject": subject,
+                # Mark as forward type (we'll add this field in Phase 5)
+                # "communication_subtype": "Forward",
+            }
+        )
+
+        # Link to original communication if available
+        if original_communication_id:
+            communication.in_reply_to = original_communication_id
+
+        communication.insert(ignore_permissions=True)
+
+        # Attach files
+        _attachments = []
+        for attachment in attachments:
+            try:
+                file_doc = frappe.get_doc("File", attachment)
+                file_doc.attached_to_name = communication.name
+                file_doc.attached_to_doctype = "Communication"
+                file_doc.save(ignore_permissions=True)
+                self.attach_file_with_doc("HD Ticket", self.name, file_doc.file_url)
+                _attachments.append({"file_url": file_doc.file_url})
+            except Exception as e:
+                frappe.log_error(f"Failed to attach file {attachment}: {str(e)}")
+
+        # Skip email sending if workflow disabled
+        if skip_email_workflow:
+            return {"success": True, "communication": communication.name}
+
+        if not sender_email:
+            frappe.throw(_("Cannot send email. No sender email set up!"))
+
+        # Parse message content
+        parsed_message = self.parse_content(full_message)
+
+        reply_to_email = sender_email.email_id
+
+        # Determine send timing
+        send_delayed = True
+        send_now = False
+
+        if self.instantly_send_email():
+            send_delayed = False
+            send_now = True
+
+        # Send email
+        try:
+            frappe.sendmail(
+                attachments=_attachments,
+                bcc=bcc,
+                cc=cc,
+                communication=communication.name,
+                delayed=send_delayed,
+                expose_recipients="header",
+                message=parsed_message,
+                as_markdown=True,
+                now=send_now,
+                recipients=to,
+                reference_doctype="HD Ticket",
+                reference_name=self.name,
+                reply_to=reply_to_email,
+                sender=reply_to_email,
+                subject=subject,
+                with_container=False,
+            )
+
+            return {"success": True, "communication": communication.name}
+
+        except Exception as e:
+            frappe.throw(_("Failed to send forward email: {0}").format(str(e)))
+
+    @frappe.whitelist()
     # flake8: noqa
     def create_communication_via_contact(
         self, message, attachments=[], new_ticket=False

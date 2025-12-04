@@ -17,6 +17,16 @@
         </Button>
         <Button
           variant="ghost"
+          label="Forward"
+          :class="[showForwardBox ? '!bg-gray-300 hover:!bg-gray-200' : '']"
+          @click="toggleForwardBox()"
+        >
+          <template #prefix>
+            <ForwardIcon class="h-4" />
+          </template>
+        </Button>
+        <Button
+          variant="ghost"
           label="Comment"
           :class="[showCommentBox ? '!bg-gray-300 hover:!bg-gray-200' : '']"
           @click="toggleCommentBox()"
@@ -60,6 +70,39 @@
       />
     </div>
     <div
+      v-show="showForwardBox"
+      ref="forwardBoxRef"
+      class="flex gap-1.5 flex-1"
+      @keydown.ctrl.enter.capture.stop="submitForward"
+      @keydown.meta.enter.capture.stop="submitForward"
+    >
+      <EmailEditor
+        ref="forwardEditorRef"
+        mode="forward"
+        :original-communication-id="originalCommunicationId"
+        :label="
+          isMobileView ? 'Forward' : isMac ? 'Forward (⌘ + ⏎)' : 'Forward (Ctrl + ⏎)'
+        "
+        v-model:content="content"
+        placeholder="Forwarding this email..."
+        :ticketId="ticketId"
+        :to-emails="[]"
+        :cc-emails="[]"
+        :bcc-emails="[]"
+        @submit="
+          () => {
+            showForwardBox = false;
+            emit('update');
+          }
+        "
+        @discard="
+          () => {
+            showForwardBox = false;
+          }
+        "
+      />
+    </div>
+    <div
       v-show="showCommentBox"
       ref="commentBoxRef"
       @keydown.ctrl.enter.capture.stop="submitComment"
@@ -96,7 +139,7 @@
 
 <script setup lang="ts">
 import { CommentTextEditor, EmailEditor, TypingIndicator } from "@/components";
-import { CommentIcon, EmailIcon } from "@/components/icons/";
+import { CommentIcon, EmailIcon, ForwardIcon } from "@/components/icons/";
 import { useDevice } from "@/composables";
 import { useScreenSize } from "@/composables/screen";
 import { showCommentBox, showEmailBox } from "@/pages/ticket/modalStates";
@@ -111,19 +154,39 @@ let doc = defineModel();
 // let doc = inject(TicketSymbol)?.value.doc
 const emailEditorRef = ref(null);
 const commentTextEditorRef = ref(null);
+const forwardEditorRef = ref(null);
 const emailBoxRef = ref(null);
 const commentBoxRef = ref(null);
+const forwardBoxRef = ref(null);
+const showForwardBox = ref(false);
+const originalCommunicationId = ref(null);
 
 function toggleEmailBox() {
   if (showCommentBox.value) {
     showCommentBox.value = false;
   }
+  if (showForwardBox.value) {
+    showForwardBox.value = false;
+  }
   showEmailBox.value = !showEmailBox.value;
+}
+
+function toggleForwardBox() {
+  if (showEmailBox.value) {
+    showEmailBox.value = false;
+  }
+  if (showCommentBox.value) {
+    showCommentBox.value = false;
+  }
+  showForwardBox.value = !showForwardBox.value;
 }
 
 function toggleCommentBox() {
   if (showEmailBox.value) {
     showEmailBox.value = false;
+  }
+  if (showForwardBox.value) {
+    showForwardBox.value = false;
   }
   showCommentBox.value = !showCommentBox.value;
 }
@@ -136,6 +199,12 @@ function submitEmail() {
 
 function submitComment() {
   if (commentTextEditorRef.value.submitComment()) {
+    emit("update");
+  }
+}
+
+function submitForward() {
+  if (forwardEditorRef.value.submitMail()) {
     emit("update");
   }
 }
@@ -159,12 +228,11 @@ function replyToEmail(data: object) {
 }
 
 function forwardEmail(data: object) {
-  showEmailBox.value = true;
-  emailEditorRef.value.addToForward(
-    data.content,
-    data.subject,
-    data.attachments
-  );
+  showForwardBox.value = true;
+  originalCommunicationId.value = data.communicationId;
+
+  // For now, the editor will be empty. The backend will format the forward message.
+  // We could optionally pre-populate with the original content if needed.
 }
 
 const props = defineProps({
@@ -208,17 +276,30 @@ watch(
   }
 );
 
+watch(
+  () => showForwardBox.value,
+  (value) => {
+    if (value) {
+      forwardEditorRef.value?.editor?.commands?.focus();
+    }
+  }
+);
+
 useShortcut("r", () => {
   toggleEmailBox();
 });
 useShortcut("c", () => {
   toggleCommentBox();
 });
+useShortcut("f", () => {
+  toggleForwardBox();
+});
 
 defineExpose({
   replyToEmail,
   forwardEmail,
   toggleEmailBox,
+  toggleForwardBox,
   toggleCommentBox,
   editor: emailEditorRef,
 });
@@ -228,6 +309,12 @@ import { onClickOutside } from "@vueuse/core";
 onClickOutside(emailBoxRef, () => {
   if (showEmailBox.value) {
     showEmailBox.value = false;
+  }
+});
+
+onClickOutside(forwardBoxRef, () => {
+  if (showForwardBox.value) {
+    showForwardBox.value = false;
   }
 });
 
