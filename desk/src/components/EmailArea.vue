@@ -63,6 +63,7 @@
             to: sender?.name ?? to,
             cc: cc,
             bcc: bcc,
+            communicationId: name,
           })"
         >
           <ForwardIcon class="h-4 w-4" />

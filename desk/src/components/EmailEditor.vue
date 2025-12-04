@@ -224,10 +224,14 @@ const props = defineProps({
     type: Array,
     default: () => [],
   },
-});
-
-const label = computed(() => {
-  return sendMail.loading ? "Sending..." : props.label;
+  mode: {
+    type: String,
+    default: "reply", // "reply" or "forward"
+  },
+  originalCommunicationId: {
+    type: String,
+    default: null,
+  },
 });
 
 const emit = defineEmits(["submit", "discard"]);
@@ -295,6 +299,33 @@ const sendMail = createResource({
   debounce: 300,
 });
 
+const forwardMail = createResource({
+  url: "run_doc_method",
+  makeParams: () => ({
+    dt: props.doctype,
+    dn: props.ticketId,
+    method: "forward_email",
+    args: {
+      attachments: attachments.value.map((x) => x.name),
+      to: toEmailsClone.value.join(","),
+      cc: ccEmailsClone.value?.join(","),
+      bcc: bccEmailsClone.value?.join(","),
+      message: newEmail.value,
+      original_communication_id: props.originalCommunicationId,
+    },
+  }),
+  onSuccess: () => {
+    resetState();
+    emit("submit");
+  },
+  debounce: 300,
+});
+
+const label = computed(() => {
+  const isLoading = props.mode === "forward" ? forwardMail.loading : sendMail.loading;
+  return isLoading ? "Sending..." : props.label;
+});
+
 function submitMail() {
   if (isContentEmpty(newEmail.value)) {
     return false;
@@ -306,7 +337,12 @@ function submitMail() {
     return false;
   }
 
-  sendMail.submit();
+  if (props.mode === "forward") {
+    forwardMail.submit();
+  } else {
+    sendMail.submit();
+  }
+  return true;
 }
 
 function toggleCC() {
@@ -351,20 +387,6 @@ function addToReply(
     .run();
 }
 
-function addToForward(body: string, subject: string, _attachments: any[]) {
-  newEmail.value = body;
-  attachments.value = _attachments;
-  editorRef.value.editor
-    .chain()
-    .clearContent()
-    .insertContent(body)
-    .focus("all")
-    // .setBlockquote()
-    .insertContentAt(0, { type: "paragraph" })
-    .focus("start")
-    .run();
-}
-
 function resetState() {
   newEmail.value = null;
   attachments.value = [];
@@ -389,7 +411,6 @@ const editor = computed(() => {
 
 defineExpose({
   addToReply,
-  addToForward,
   editor,
   submitMail,
 });
